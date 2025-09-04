@@ -51,7 +51,8 @@ jobs:
   repack-super:
     # We use a larger runner to avoid "No space left on device" errors, but your cleanup scripts are essential.
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: write
     # 'steps' are a sequence of tasks that will be executed as part of the job.
     steps:
     - name: Checkout repository
