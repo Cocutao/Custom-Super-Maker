@@ -121,7 +121,7 @@ jobs:
         if [ ! -s "stock_firmware.zip" ]; then echo "✗ CRITICAL ERROR: Failed to download or find stock firmware." && exit 1; fi
 
         # Find the AP filename from the zip archive contents
-        AP_FILENAME=$(unzip -l "stock_firmware.zip" | grep -o -E "AP_[A-Z0-9_]+\.tar\.md5" | head -n 1)
+        AP_FILENAME=$(unzip -l "stock_firmware.zip" | grep -i -o -E "AP_.*\.tar\.md5" | head -n 1)
 
         # Your excellent check: if the AP file is not found, print debug info and exit.
         if [ -z "$AP_FILENAME" ]; then
