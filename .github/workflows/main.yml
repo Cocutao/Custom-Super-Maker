@@ -98,13 +98,8 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        # Install only what's needed for building. Heimdall is NOT required for this process.
-        # - android-sdk-libsparse-utils: For handling Android sparse images (simg2img).
-        # - tar, xz-utils, liblz4-tool, unzip, gzip, p7zip-full: For extracting various archive formats.
-        # - file: To identify file types.
-        # - wget, curl: For downloading files.
-        # - megatools: For downloading from MEGA.nz links.
-        sudo apt-get install -y android-sdk-libsparse-utils tar xz-utils liblz4-tool unzip gzip p7zip-full file wget curl megatools
+        # Install what's needed for building, including f2fs-tools for mounting f2fs filesystems.
+        sudo apt-get install -y android-sdk-libsparse-utils tar xz-utils liblz4-tool unzip gzip p7zip-full file wget curl megatools f2fs-tools
 
     # This step ensures the main script is present and executable.
     - name: Verify and Prepare Script
@@ -221,29 +216,46 @@ jobs:
         if [ ! -f "custom_system.img" ]; then echo "✗ Error: custom_system.img not created." && exit 1; fi
     
     # This step modifies the build.prop file inside the custom system image for branding.
+    # It now automatically detects the filesystem type to prevent mount errors.
     - name: Modify build.prop for Branding
       run: |
         cd work
-        # Create a temporary mount point.
-        mkdir -p mnt_system
-        # Mount the custom system image as a loop device to access its filesystem.
-        sudo mount -o loop custom_system.img mnt_system
-        
-        # Check if build.prop exists.
-        if [ -f "mnt_system/system/build.prop" ]; then
-          echo "==> Modifying build.prop..."
-          # Use sed to replace the value of 'ro.build.id' with the custom branding.
-          # The 's|...' syntax is used to avoid issues with slashes in the replacement string.
-          sudo sed -i 's|ro.build.id=.*|ro.build.id=Built.By.Minh2077.Script|g' mnt_system/system/build.prop
-          echo "==> build.prop modified."
-        else
-          echo "⚠️ Warning: build.prop not found at mnt_system/system/build.prop. Skipping modification."
-        fi
-        
-        # Unmount the image to save the changes.
-        sudo umount mnt_system
-        # Remove the temporary mount point.
-        rm -rf mnt_system
+        echo "==> Detecting filesystem type for custom_system.img..."
+        # Use blkid to get the filesystem type. Redirect stderr to /dev/null to suppress noise.
+        FS_TYPE=$(sudo blkid -o value -s TYPE custom_system.img 2>/dev/null)
+        echo "==> Filesystem detected: ${FS_TYPE:-'Unknown'}"
+
+        # Use a case statement to handle different filesystem types.
+        case "$FS_TYPE" in
+          "ext4"|"f2fs")
+            echo "==> Filesystem is '$FS_TYPE'. Attempting to mount for modification..."
+            mkdir -p mnt_system
+            # Mount the image, explicitly specifying the type for reliability.
+            if sudo mount -t "$FS_TYPE" -o loop custom_system.img mnt_system; then
+              echo "==> Mount successful."
+              # Check if build.prop exists at the standard location.
+              if [ -f "mnt_system/system/build.prop" ]; then
+                echo "==> Modifying build.prop..."
+                sudo sed -i 's|ro.build.id=.*|ro.build.id=Built.By.Minh2077.Script|g' mnt_system/system/build.prop
+                echo "==> build.prop modified."
+              else
+                echo "⚠️ Warning: build.prop not found at mnt_system/system/build.prop. Skipping modification."
+              fi
+              # Unmount the image to save changes.
+              sudo umount mnt_system
+              rm -rf mnt_system
+            else
+              # If mount fails for some other reason, report it but don't fail the workflow.
+              echo "✗ Error: Failed to mount the $FS_TYPE image. Skipping build.prop modification."
+            fi
+            ;;
+          "erofs")
+            echo "⚠️ Warning: Filesystem is EROFS (read-only). Modification is not possible. Skipping."
+            ;;
+          *)
+            echo "⚠️ Warning: Unsupported or unknown filesystem type ('${FS_TYPE:-'Unknown'}'). Skipping build.prop modification."
+            ;;
+        esac
 
     # This step prepares the command-line flags for the 'repacksuper.sh' script based on the workflow inputs.
     - name: Prepare repacksuper.sh flags
