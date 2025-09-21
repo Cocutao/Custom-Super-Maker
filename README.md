@@ -196,6 +196,8 @@ PRs and Issues are welcome—let's fix laggy Samsungs together.
 
 ## ⚠️ Disclaimer
 
-> Flashing custom ROMs can brick your device or void your warranty.
-> Always back up your data and proceed at your own risk.
-> This project is provided as-is with no guarantees.
+> **I am not responsible for bricked devices, dead SD cards, thermonuclear war, or you getting fired because the alarm app failed. Please do some research if you have any concerns about features included in this workflow before using it! YOU are choosing to make these modifications, and if you point the finger at me for messing up your device, I will laugh at you.**
+>
+> **Seriously, I put a giant warning at the top about ext4 vs erofs. If you ignore it, use an erofs ROM anyway, then come whining in the issues that it doesn't work - I will close your issue, laugh at you, and probably add you to the hall of shame. This isn't rocket science, people.**
+>
+> **Flashing custom firmware voids warranties, can permanently brick devices, and requires basic reading comprehension. If you don't have the last one, maybe stick to TikTok instead of modding phones.**
