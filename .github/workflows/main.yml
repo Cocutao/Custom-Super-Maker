@@ -126,29 +126,57 @@ jobs:
         lz4 -d "$SUPER_LZ4" stock_super_sparse.img
         rm "$SUPER_LZ4"
 
-    - name: Download Custom System
+    - name: Download and Extract Custom System (FIXED)
       run: |
         cd work
         echo "==> Downloading Custom ROM..."
         wget -O custom_rom_package "${{ github.event.inputs.custom_system_url }}"
-        FILE_TYPE=$(file -b custom_rom_package)
         
-        echo "Detected file type: $FILE_TYPE"
+        # Determine file type
+        FILE_DESC=$(file -b custom_rom_package)
+        echo "Detected File Type: $FILE_DESC"
+
+        # Extraction Logic
+        if [[ "$FILE_DESC" == *"XZ compressed"* ]]; then
+            mv custom_rom_package c.img.xz
+            unxz c.img.xz
+            mv c.img custom_system.img
+            
+        elif [[ "$FILE_DESC" == *"Zip archive"* ]]; then
+            unzip -o custom_rom_package
+            
+        elif [[ "$FILE_DESC" == *"7-zip archive"* ]]; then
+            7z x custom_rom_package
+            
+        elif [[ "$FILE_DESC" == *"gzip compressed"* ]]; then
+            mv custom_rom_package c.img.gz
+            gzip -d c.img.gz
+            mv c.img custom_system.img
+            
+        else
+            # Assume it's a raw image if no compression detected
+            echo "Assuming raw image..."
+            mv custom_rom_package custom_system.img
+        fi
         
-        case "$FILE_TYPE" in
-          *"XZ compressed"*) mv custom_rom_package c.img.xz && unxz c.img.xz && mv c.img custom_system.img ;;
-          *"Zip archive"*) 
-             unzip -o custom_rom_package 
-             SYSTEM_IMG=$(find . -name "system.img" -o -name "system.raw.img" | head -n 1)
-             mv "$SYSTEM_IMG" custom_system.img 
-             ;;
-          *"7-zip archive"*)
-             7z x custom_rom_package
-             SYSTEM_IMG=$(find . -name "system.img" -o -name "system.raw.img" | head -n 1)
-             mv "$SYSTEM_IMG" custom_system.img 
-             ;;
-          *) mv custom_rom_package custom_system.img ;;
-        esac
+        # --- THE FIX: Find any extracted .img file ---
+        # If custom_system.img doesn't exist yet (from zip/7z extraction)
+        if [ ! -f "custom_system.img" ]; then
+            echo "==> Searching for extracted .img file..."
+            # Find largest .img file, excluding the stock super image we prepared earlier
+            IMG_FILE=$(find . -type f -name "*.img" ! -name "stock_super_sparse.img" -printf "%s\t%p\n" | sort -n | tail -1 | cut -f2-)
+            
+            if [ -z "$IMG_FILE" ]; then
+                echo "✗ Error: No .img file found after extraction!"
+                ls -R
+                exit 1
+            fi
+            
+            echo "==> Found image: $IMG_FILE"
+            mv "$IMG_FILE" custom_system.img
+        fi
+        
+        echo "==> Custom system image prepared: custom_system.img"
 
     - name: Ensure Raw Image
       run: |
