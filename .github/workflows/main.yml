@@ -249,6 +249,14 @@ jobs:
         tar -cvf "$TAR_NAME" super.img
         echo "tar_path=work/$TAR_NAME" >> $GITHUB_OUTPUT
 
+    # --- RESTORED STEP: Upload to GitHub Artifacts ---
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: repacked-super-image
+        path: ${{ steps.package.outputs.tar_path }}
+        retention-days: 5
+
     - name: Upload Release
       if: github.event.inputs.upload_to_release == 'true'
       uses: softprops/action-gh-release@v2
