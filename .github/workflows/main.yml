@@ -189,7 +189,7 @@ jobs:
       run: |
         cd work
         echo "==> Downloading ASRControl APK..."
-        wget -O ASRControl.apk "https://github.com/minhmc2007/minhmc2007/releases/download/v0.0.1/app-release.apk"
+        wget -O ASRControl.apk "https://github.com/minhmc2007/minhmc2007/releases/download/v0.0.1/app-debug.apk"
         if [ ! -s "ASRControl.apk" ]; then echo "✗ Warning: APK download failed or empty. Injection will skip."; fi
 
     - name: Ensure Raw Image
