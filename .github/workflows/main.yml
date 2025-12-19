@@ -84,42 +84,42 @@ jobs:
       run: |
         cd work
         PRESET="${{ github.event.inputs.device_preset }}"
-
+        
         if [[ "$PRESET" == "Samsung A04s (64GB)" ]]; then
           echo "==> Downloading Samsung A04s Firmware..."
           # File ID: 1C9GtYTn1EZ4sQN7qfJeWN6gxDj_WbgY-
           gdown --output stock_firmware.zip '1C9GtYTn1EZ4sQN7qfJeWN6gxDj_WbgY-'
-
+          
         elif [[ "$PRESET" == "Samsung A15 (128/256GB)" ]]; then
           echo "==> Downloading Samsung A15 Firmware..."
           # File ID: 12FoeBkPDHddj4lzd-T6pjHRQ8Ey3c2U8
           gdown --output stock_firmware.zip '12FoeBkPDHddj4lzd-T6pjHRQ8Ey3c2U8'
-
+          
         else
           echo "==> Using Custom URL..."
           FIRMWARE_URL="${{ github.event.inputs.stock_firmware_url }}"
           if [ -z "$FIRMWARE_URL" ]; then echo "✗ Error: No preset selected and no URL provided." && exit 1; fi
-
-          if [[ $FIRMWARE_URL == *"mega.nz"* ]]; then
+          
+          if [[ $FIRMWARE_URL == *"mega.nz"* ]]; then 
             megadl -o stock_firmware.zip "$FIRMWARE_URL"
-          else
+          else 
             wget --content-disposition -O stock_firmware.zip "$FIRMWARE_URL"
           fi
         fi
-
+        
         if [ ! -s "stock_firmware.zip" ]; then echo "✗ Error: Firmware download failed." && exit 1; fi
-
+        
         # Extract AP file
         echo "==> Extracting AP file..."
         AP_FILENAME=$(unzip -l "stock_firmware.zip" | grep -i -o -E "AP_.*\.tar\.md5" | head -n 1)
         unzip -o -j "stock_firmware.zip" "$AP_FILENAME"
         rm "stock_firmware.zip"
-
+        
         # Extract super.img.lz4
         echo "==> Extracting super.img.lz4..."
         tar -xvf "$AP_FILENAME" --wildcards '*super.img*.lz4'
         rm "$AP_FILENAME"
-
+        
         # Decompress LZ4
         echo "==> Decompressing LZ4..."
         SUPER_LZ4=$(ls *super.img*.lz4 | head -n 1)
@@ -132,13 +132,13 @@ jobs:
         echo "==> Downloading Custom ROM..."
         ROM_URL="${{ github.event.inputs.custom_system_url }}"
         wget -O custom_rom_package "$ROM_URL"
-
+        
         # Capture Filename for Branding (remove query params if any)
         CLEAN_URL="${ROM_URL%%\?*}"
         ROM_NAME=$(basename "$CLEAN_URL")
         echo "Detected ROM Name: $ROM_NAME"
         echo "ROM_NAME=$ROM_NAME" >> $GITHUB_ENV
-
+        
         # Determine file type
         FILE_DESC=$(file -b custom_rom_package)
         echo "Detected File Type: $FILE_DESC"
@@ -148,48 +148,48 @@ jobs:
             mv custom_rom_package c.img.xz
             unxz c.img.xz
             mv c.img custom_system.img
-
+            
         elif [[ "$FILE_DESC" == *"Zip archive"* ]]; then
             unzip -o custom_rom_package
-
+            
         elif [[ "$FILE_DESC" == *"7-zip archive"* ]]; then
             7z x custom_rom_package
-
+            
         elif [[ "$FILE_DESC" == *"gzip compressed"* ]]; then
             mv custom_rom_package c.img.gz
             gzip -d c.img.gz
             mv c.img custom_system.img
-
+            
         else
             # Assume it's a raw image if no compression detected
             echo "Assuming raw image..."
             mv custom_rom_package custom_system.img
         fi
-
+        
         # --- THE FIX: Find any extracted .img file ---
         # If custom_system.img doesn't exist yet (from zip/7z extraction)
         if [ ! -f "custom_system.img" ]; then
             echo "==> Searching for extracted .img file..."
             # Find largest .img file, excluding the stock super image we prepared earlier
             IMG_FILE=$(find . -type f -name "*.img" ! -name "stock_super_sparse.img" -printf "%s\t%p\n" | sort -n | tail -1 | cut -f2-)
-
+            
             if [ -z "$IMG_FILE" ]; then
                 echo "✗ Error: No .img file found after extraction!"
                 ls -R
                 exit 1
             fi
-
+            
             echo "==> Found image: $IMG_FILE"
             mv "$IMG_FILE" custom_system.img
         fi
-
+        
         echo "==> Custom system image prepared: custom_system.img"
 
     - name: Download ASRControl APK
       run: |
         cd work
         echo "==> Downloading ASRControl APK..."
-        wget -O ASRControl.apk "https://github.com/minhmc2007/minhmc2007/releases/download/v0.0.1/app-debug.apk"
+        wget -O ASRControl.apk "https://github.com/minhmc2007/minhmc2007/releases/download/v0.0.1/app-release.apk"
         if [ ! -s "ASRControl.apk" ]; then echo "✗ Warning: APK download failed or empty. Injection will skip."; fi
 
     - name: Ensure Raw Image
@@ -205,14 +205,17 @@ jobs:
           mv custom_system.orig custom_system.img
         fi
 
-    - name: System Modification (APK Inject & Branding)
+    - name: System Modification (APK, Branding, Bash & Neofetch)
       run: |
         cd work
         echo "==> Starting Docker for System Modification..."
-
-        # We run this in Docker because managing loop mounts and EROFS tools
-        # is much more reliable in a controlled container with root privileges.
-
+        
+        # 1. Download Static Bash (aarch64) - Updated URL
+        wget -O bash "https://github.com/robxu9/bash-static/releases/download/5.2.015-1.2.3-2/bash-linux-aarch64"
+        
+        # 2. Download Neofetch
+        wget -O neofetch "https://raw.githubusercontent.com/dylanaraps/neofetch/master/neofetch"
+        
         docker run --rm --privileged \
           -v "$(pwd):/work" \
           -e ROM_NAME="${{ env.ROM_NAME }}" \
@@ -221,101 +224,82 @@ jobs:
             set -e
             apt-get update -qq && apt-get install -y -qq e2fsprogs util-linux file erofs-utils android-sdk-libsparse-utils
             cd /work
-
-            # 1. Identify Filesystem
+            
             FS_TYPE=$(blkid -o value -s TYPE custom_system.img 2>/dev/null || echo "unknown")
-
-            # If blkid fails, try file command heuristics
             if [ "$FS_TYPE" = "unknown" ]; then
                 if file custom_system.img | grep -q "EROFS"; then FS_TYPE="erofs"; fi
             fi
-
             echo "==> Filesystem detected: $FS_TYPE"
-
-            # Define Injection Function
+            
             inject_files() {
                 local MOUNT_DIR=$1
-                echo "--> Injecting ASRControl APK..."
-
-                # Check structure: Some ROMs have /system/app, others have /app at root of image
+                
+                # --- 1. APP INJECTION ---
                 TARGET_DIR="$MOUNT_DIR/system/app"
                 if [ ! -d "$TARGET_DIR" ]; then TARGET_DIR="$MOUNT_DIR/app"; fi
-
+                
                 if [ -f "ASRControl.apk" ]; then
                     mkdir -p "$TARGET_DIR/ASRControl"
                     cp ASRControl.apk "$TARGET_DIR/ASRControl/ASRControl.apk"
                     chmod 755 "$TARGET_DIR/ASRControl"
                     chmod 644 "$TARGET_DIR/ASRControl/ASRControl.apk"
                     echo "--> APK Injected."
-                else
-                    echo "--> Warning: ASRControl.apk not found in work dir."
                 fi
+                
+                # --- 2. BASH & NEOFETCH INJECTION ---
+                BIN_DIR="$MOUNT_DIR/system/bin"
+                if [ ! -d "$BIN_DIR" ]; then BIN_DIR="$MOUNT_DIR/bin"; fi
+                
+                echo "--> Injecting Bash & Neofetch into $BIN_DIR..."
+                
+                # Copy files
+                cp bash "$BIN_DIR/bash"
+                cp neofetch "$BIN_DIR/neofetch"
+                
+                # Set permissions (Crucial: 755 = rwxr-xr-x)
+                chmod 755 "$BIN_DIR/bash"
+                chmod 755 "$BIN_DIR/neofetch"
+                
+                echo "--> Binary Injection Complete."
 
-                echo "--> Modifying build.prop for branding..."
-                # Build prop location varies
+                # --- 3. BUILD.PROP MODS ---
                 PROP_FILE="$MOUNT_DIR/system/build.prop"
                 if [ ! -f "$PROP_FILE" ]; then PROP_FILE="$MOUNT_DIR/build.prop"; fi
-
+                
                 if [ -f "$PROP_FILE" ]; then
                     sed -i "s|ro\.build\.id=.*|ro.build.id=Built.By.Minh2077.Script|g" "$PROP_FILE"
-
-                    # Add App required properties
                     if ! grep -q "ro.repack.author" "$PROP_FILE"; then
+                        echo "" >> "$PROP_FILE"
                         echo "ro.repack.version=v1.0" >> "$PROP_FILE"
-                        echo "ro.repack.author=Minhmc2077"
-                        echo "ro.repack.fs=$FS_TYPE"
-                        # Use variable passed from GitHub Env
+                        echo "ro.repack.author=Minhmc2077" >> "$PROP_FILE"
+                        echo "ro.repack.fs=$FS_TYPE" >> "$PROP_FILE"
                         echo "ro.repack.gsi=$ROM_NAME" >> "$PROP_FILE"
+                        echo "ro.repack.asr_control=true" >> "$PROP_FILE"
+                        echo "ro.repack.extras=bash,neofetch" >> "$PROP_FILE"
                     fi
-                    echo "--> Branding applied: $ROM_NAME"
-                else
-                    echo "--> Warning: build.prop not found."
                 fi
             }
 
             if [ "$FS_TYPE" = "ext4" ]; then
-              echo "==> Handling EXT4 Image..."
-
-              # 1. Expand image to fit new APK (Add 150MB buffer)
-              echo "--> Resizing image..."
+              echo "==> Handling EXT4..."
               e2fsck -f -y custom_system.img
-              resize2fs custom_system.img $(($(stat -c%s custom_system.img)/4096 + 38400)) # Add ~150MB blocks
-
-              # 2. Mount
+              # Add extra space for Bash (2MB) + Neofetch (300KB) + APK + Buffer
+              resize2fs custom_system.img $(($(stat -c%s custom_system.img)/4096 + 40000))
+              
               mkdir -p /mnt/sys
               mount -o loop custom_system.img /mnt/sys
-
-              # 3. Inject
               inject_files "/mnt/sys"
-
-              # 4. Unmount and Shrink
               umount /mnt/sys
               e2fsck -f -y custom_system.img
               resize2fs -M custom_system.img
-              echo "==> EXT4 modification complete."
 
             elif [ "$FS_TYPE" = "erofs" ]; then
-              echo "==> Handling EROFS Image..."
-
-              # 1. Extract
-              echo "--> Extracting EROFS..."
+              echo "==> Handling EROFS..."
               fsck.erofs --extract=extracted_system custom_system.img
-
-              # 2. Inject
               inject_files "extracted_system"
-
-              # 3. Repack
-              echo "--> Repacking EROFS..."
-              # Using lz4hc compression which is standard for Android GSI
               mkfs.erofs -zlz4hc custom_system_new.img extracted_system
-
-              # Replace old image
               mv custom_system_new.img custom_system.img
               rm -rf extracted_system
-              echo "==> EROFS modification complete."
-
-            else
-               echo "==> Filesystem is $FS_TYPE. Cannot modify securely. Skipping injection."
             fi
           '
 
@@ -327,7 +311,7 @@ jobs:
         if [ "${{ github.event.inputs.empty_product }}" == "true" ]; then FLAGS="$FLAGS -e"; fi
         if [ "${{ github.event.inputs.empty_system_ext }}" == "true" ]; then FLAGS="$FLAGS -x"; fi
         if [ "${{ github.event.inputs.writable }}" == "true" ]; then FLAGS="$FLAGS -w"; fi
-
+        
         echo "Running with flags: $FLAGS"
         ./repacksuper.sh $FLAGS work/stock_super_sparse.img work/custom_system.img work/repacked_super.img
 
