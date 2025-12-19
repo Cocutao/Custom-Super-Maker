@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background>
+        <!-- Black background to match your Welcome Screen -->
+        <color android:color="#000000"/>
+    </background>
+    <foreground>
+        <!-- This reuses the image you have in app/src/main/res/drawable/logo.png (or .xml) -->
+        <drawable android:drawable="@drawable/logo"/>
+    </foreground>
+</adaptive-icon>
