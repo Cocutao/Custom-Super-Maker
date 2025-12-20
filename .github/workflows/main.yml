@@ -217,7 +217,7 @@ jobs:
         # 2. Download Neofetch
         wget -O neofetch "https://raw.githubusercontent.com/dylanaraps/neofetch/master/neofetch"
         
-        # UPDATED TO UBUNTU 24.04 for newer erofs-utils
+        # Using Ubuntu 24.04 for newer erofs-utils
         docker run --rm --privileged \
           -v "$(pwd):/work" \
           -e ROM_NAME="${{ env.ROM_NAME }}" \
@@ -227,9 +227,9 @@ jobs:
             apt-get update -qq && apt-get install -y -qq e2fsprogs util-linux file erofs-utils android-sdk-libsparse-utils
             cd /work
             
-            # Check for EROFS version
+            # FIXED: Correct flag for version check
             echo "==> Using erofs-utils version:"
-            fsck.erofs --version
+            fsck.erofs -V
             
             FS_TYPE=$(blkid -o value -s TYPE custom_system.img 2>/dev/null || echo "unknown")
             if [ "$FS_TYPE" = "unknown" ]; then
@@ -258,11 +258,8 @@ jobs:
                 
                 echo "--> Injecting Bash & Neofetch into $BIN_DIR..."
                 
-                # Copy files
                 cp bash "$BIN_DIR/bash"
                 cp neofetch "$BIN_DIR/neofetch"
-                
-                # Set permissions (Crucial: 755 = rwxr-xr-x)
                 chmod 755 "$BIN_DIR/bash"
                 chmod 755 "$BIN_DIR/neofetch"
                 
@@ -289,7 +286,7 @@ jobs:
             if [ "$FS_TYPE" = "ext4" ]; then
               echo "==> Handling EXT4..."
               e2fsck -f -y custom_system.img
-              # Add extra space for Bash (2MB) + Neofetch (300KB) + APK + Buffer
+              # Add extra space for Bash + Neofetch + APK + Buffer
               resize2fs custom_system.img $(($(stat -c%s custom_system.img)/4096 + 40000))
               
               mkdir -p /mnt/sys
@@ -301,10 +298,14 @@ jobs:
 
             elif [ "$FS_TYPE" = "erofs" ]; then
               echo "==> Handling EROFS..."
-              # Ubuntu 24.04 supports --extract correctly
+              # Ubuntu 24.04 erofs-utils supports --extract
               fsck.erofs --extract=extracted_system custom_system.img
+              
               inject_files "extracted_system"
+              
+              echo "--> Repacking EROFS..."
               mkfs.erofs -zlz4hc custom_system_new.img extracted_system
+              
               mv custom_system_new.img custom_system.img
               rm -rf extracted_system
             fi
