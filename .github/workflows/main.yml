@@ -188,7 +188,8 @@ jobs:
     - name: Download ASRControl APK
       run: |
         cd work
-        echo "==> Downloading ASRControl APK..."
+        echo "==> Downloading ASRControl APK (Debug)..."
+        # Updated to app-debug.apk as requested
         wget -O ASRControl.apk "https://github.com/minhmc2007/minhmc2007/releases/download/v0.0.1/app-debug.apk"
         if [ ! -s "ASRControl.apk" ]; then echo "✗ Warning: APK download failed or empty. Injection will skip."; fi
 
@@ -216,14 +217,19 @@ jobs:
         # 2. Download Neofetch
         wget -O neofetch "https://raw.githubusercontent.com/dylanaraps/neofetch/master/neofetch"
         
+        # UPDATED TO UBUNTU 24.04 for newer erofs-utils
         docker run --rm --privileged \
           -v "$(pwd):/work" \
           -e ROM_NAME="${{ env.ROM_NAME }}" \
-          ubuntu:22.04 \
+          ubuntu:24.04 \
           bash -c '
             set -e
             apt-get update -qq && apt-get install -y -qq e2fsprogs util-linux file erofs-utils android-sdk-libsparse-utils
             cd /work
+            
+            # Check for EROFS version
+            echo "==> Using erofs-utils version:"
+            fsck.erofs --version
             
             FS_TYPE=$(blkid -o value -s TYPE custom_system.img 2>/dev/null || echo "unknown")
             if [ "$FS_TYPE" = "unknown" ]; then
@@ -295,6 +301,7 @@ jobs:
 
             elif [ "$FS_TYPE" = "erofs" ]; then
               echo "==> Handling EROFS..."
+              # Ubuntu 24.04 supports --extract correctly
               fsck.erofs --extract=extracted_system custom_system.img
               inject_files "extracted_system"
               mkfs.erofs -zlz4hc custom_system_new.img extracted_system
