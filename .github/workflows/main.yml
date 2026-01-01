@@ -255,14 +255,21 @@ jobs:
 
             if [ "$FS_TYPE" = "ext4" ]; then
               echo "==> Handling EXT4..."
+              echo "--> Extending image size..."
+              truncate -s +2G custom_system.img
+              
+              echo "--> Resizing filesystem..."
+              resize2fs -f custom_system.img
+              
+              echo "--> Unsharing blocks..."
               e2fsck -y -E unshare_blocks custom_system.img || [ $? -le 1 ]
-              resize2fs custom_system.img $(($(stat -c%s custom_system.img)/4096 + 38400))
               
               mkdir -p /mnt/sys
               mount -o loop custom_system.img /mnt/sys
               inject_files "/mnt/sys"
               umount /mnt/sys
               
+              echo "--> Shrinking image..."
               e2fsck -f -y custom_system.img || [ $? -le 1 ]
               resize2fs -M custom_system.img
 
