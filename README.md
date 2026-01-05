@@ -1,8 +1,8 @@
-
 # 🚀 Samsung Super-Repacker: Unbloat Your Budget Beast
 
 [![Status](https://img.shields.io/badge/STATUS-EXPERIMENTAL-orange?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/)
 [![License](https://img.shields.io/badge/LICENSE-GPL--v3-blue?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
+[![Telegram](https://img.shields.io/badge/Telegram-Join%20Chat-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/asr_community)
 
 **Tired of your Samsung budget phone lagging like it's stuck in 2012?** 
 
@@ -78,6 +78,15 @@ Don't know where to get the `AP` link? Follow the visual guide in the `pic/` fol
 *   **"No space left on device"**: GitHub runners have ~14GB of usable space. If your firmware is massive, the build might fail. 
 *   **Bootloops**: Ensure you formatted data in recovery. Also, verify your ROM is the correct architecture (usually `arm64-ab`).
 *   **Odin Errors**: Ensure you are using the latest version of Odin and your Samsung drivers are up to date.
+
+---
+
+## 💬 Community & Support
+
+Stuck on a step? Found a bug? Or just want to flex your benchmark scores?
+**Join the official Telegram group:**
+
+👉 [**t.me/asr_community**](https://t.me/asr_community)
 
 ---
 
