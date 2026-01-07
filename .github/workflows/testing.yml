@@ -96,19 +96,19 @@ jobs:
     - name: Install Dependencies
       run: |
         echo "==> Updating and installing dependencies..."
-        sudo apt-get update
+        sudo apt-get update -qq
         
         # Standard Repack Dependencies
-        sudo apt-get install -y android-sdk-libsparse-utils tar xz-utils liblz4-tool unzip p7zip-full file wget curl megatools f2fs-tools erofs-utils python3-pip
+        sudo apt-get install -y -qq android-sdk-libsparse-utils tar xz-utils liblz4-tool unzip p7zip-full file wget curl megatools f2fs-tools erofs-utils python3-pip cpio
         
         # OEM Porting Dependencies
-        sudo apt-get install -y unace unrar zip p7zip-rar sharutils \
+        sudo apt-get install -y -qq unace unrar zip p7zip-rar sharutils \
         rar uudeview mpack arj cabextract rename liblzma-dev brotli \
         lz4 protobuf-compiler git gawk
         
         # Python dependencies
-        pip install gdown
-        pip3 install backports.lzma protobuf twrpdtgen extract-dtb pycryptodome
+        pip install -q gdown
+        pip3 install -q backports.lzma protobuf twrpdtgen extract-dtb pycryptodome
 
         # Docker
         curl -fsSL https://get.docker.com -o get-docker.sh
@@ -130,11 +130,11 @@ jobs:
         
         if [[ "$PRESET" == "Samsung A04s (64GB)" ]]; then
           echo "==> Downloading Samsung A04s Firmware..."
-          gdown --output stock_firmware.zip '1C9GtYTn1EZ4sQN7qfJeWN6gxDj_WbgY-'
+          gdown --quiet --output stock_firmware.zip '1C9GtYTn1EZ4sQN7qfJeWN6gxDj_WbgY-'
           
         elif [[ "$PRESET" == "Samsung A15 (128/256GB)" ]]; then
           echo "==> Downloading Samsung A15 Firmware..."
-          gdown --output stock_firmware.zip '12FoeBkPDHddj4lzd-T6pjHRQ8Ey3c2U8'
+          gdown --quiet --output stock_firmware.zip '12FoeBkPDHddj4lzd-T6pjHRQ8Ey3c2U8'
           
         else
           echo "==> Using Custom URL..."
@@ -144,7 +144,8 @@ jobs:
           if [[ $FIRMWARE_URL == *"mega.nz"* ]]; then 
             megadl -o stock_firmware.zip "$FIRMWARE_URL"
           else 
-            wget --content-disposition -O stock_firmware.zip "$FIRMWARE_URL"
+            # -q to shut up wget
+            wget -q --content-disposition -O stock_firmware.zip "$FIRMWARE_URL"
           fi
         fi
         
@@ -157,12 +158,27 @@ jobs:
         
         echo "==> Extracting super.img.lz4..."
         tar -xvf "$AP_FILENAME" --wildcards '*super.img*.lz4'
-        rm "$AP_FILENAME"
         
-        echo "==> Decompressing LZ4..."
+        echo "==> Decompressing Super LZ4..."
         SUPER_LZ4=$(ls *super.img*.lz4 | head -n 1)
         lz4 -d "$SUPER_LZ4" stock_super_sparse.img
         rm "$SUPER_LZ4"
+
+        # Check if we need to extract boot.img for Porting
+        if [ "${{ github.event.inputs.enable_oem_port }}" == "true" ]; then
+            echo "==> Extracting boot.img.lz4 for Permissive Patching..."
+            tar -xvf "$AP_FILENAME" --wildcards '*boot.img*.lz4' || echo "Warning: boot.img.lz4 not found in AP"
+            
+            if [ -f "boot.img.lz4" ]; then
+                echo "==> Decompressing Boot LZ4..."
+                lz4 -d boot.img.lz4 boot.img
+                rm boot.img.lz4
+            elif [ -f "boot.img" ]; then
+                echo "==> Boot image is already raw (unlikely but possible)."
+            fi
+        fi
+        
+        rm "$AP_FILENAME"
 
     # --------------------------------------------------------------------------
     # 2. Logic Split: Generate Port OR Download GSI
@@ -174,32 +190,29 @@ jobs:
       run: |
         echo "==> Starting OEM ROM Port Process..."
         
-        # 1. Clone Tool
         git clone https://github.com/minhmc2007/Link2GSI
         cd Link2GSI
         
-        # 2. Fix Firmware_extractor submodule (as per instructions)
+        # Fix submodule
         rm -rf Tools/Firmware_extractor
         git clone https://github.com/erfanoabdi/Firmware_extractor.git Tools/Firmware_extractor
         
-        # 3. Download Source Firmware
         echo "==> Downloading Source Firmware for Porting..."
         PORT_URL="${{ github.event.inputs.port_firmware_url }}"
         if [ -z "$PORT_URL" ]; then echo "✗ Error: Port Firmware URL is required for porting." && exit 1; fi
         
-        wget --content-disposition -O firmware.zip "$PORT_URL"
+        # WGET QUIET MODE ACTIVATED (-q)
+        wget -q --content-disposition -O firmware.zip "$PORT_URL"
         
-        # 4. Run Porting Script
         echo "==> Running LinkToGSI.sh..."
         chmod +x LinkToGSI.sh
         
-        # Determine ROM Type
         ROM_TYPE="${{ github.event.inputs.rom_type }}"
         
+        # Run the heavy lifting
         sudo bash LinkToGSI.sh "$(pwd)/firmware.zip" "$ROM_TYPE"
         
-        # 5. Handle Output
-        # Look for the .img file in Output folder
+        # Handle Output with SUDO because LinkToGSI runs as root
         PORTED_IMG=$(find Output -name "*.img" | head -n 1)
         
         if [ -z "$PORTED_IMG" ]; then
@@ -210,15 +223,66 @@ jobs:
         
         echo "==> Port Successful! Output: $PORTED_IMG"
         
-        # Move to main work dir for next steps
-        mv "$PORTED_IMG" ../work/custom_system.img
+        # Fix Permission and Move
+        sudo mv "$PORTED_IMG" ../work/custom_system.img
+        sudo chown $(whoami) ../work/custom_system.img
         
-        # Set Env var for injection
         echo "ROM_NAME=Ported_${ROM_TYPE}" >> $GITHUB_ENV
         
-        # Cleanup
         cd ..
         rm -rf Link2GSI
+
+    # OPTION A-2: PATCH BOOT IMAGE (Permissive) - Only if Porting
+    - name: Patch Boot Image (Permissive SELinux)
+      if: github.event.inputs.enable_oem_port == 'true'
+      run: |
+        cd work
+        if [ ! -f "boot.img" ]; then
+            echo "⚠️ Warning: boot.img not found. Skipping Permissive Patch."
+            exit 0
+        fi
+        
+        echo "==> Setting up AIK-Linux for Boot Patching..."
+        # Cloning a reliable mirror because XDA links fail in CI
+        git clone https://github.com/SebaUbuntu/AIK-Linux.git AIK
+        cd AIK
+        
+        echo "==> Unpacking boot.img..."
+        cp ../boot.img .
+        chmod +x unpackimg.sh repackimg.sh bin/*
+        ./unpackimg.sh
+        
+        echo "==> Patching cmdline to PERMISSIVE..."
+        CMDLINE_FILE="split_img/boot.img-cmdline"
+        
+        if [ -f "$CMDLINE_FILE" ]; then
+            # Replace enforcing with permissive if exists
+            sed -i 's/androidboot.selinux=enforcing/androidboot.selinux=permissive/g' "$CMDLINE_FILE"
+            
+            # Append permissive if not present
+            if ! grep -q "permissive" "$CMDLINE_FILE"; then
+                sed -i '$s/$/ androidboot.selinux=permissive/' "$CMDLINE_FILE"
+            fi
+            cat "$CMDLINE_FILE"
+        else
+            echo "⚠️ Warning: cmdline file not found inside boot.img"
+        fi
+        
+        echo "==> Repacking boot.img..."
+        ./repackimg.sh
+        
+        if [ -f "image-new.img" ]; then
+            echo "==> Patch Successful!"
+            mv image-new.img ../boot_patched.img
+        else
+            echo "✗ Error: Repack failed."
+            exit 1
+        fi
+        
+        cd ..
+        rm -rf AIK boot.img
+        mv boot_patched.img boot.img
+        echo "==> Boot image patched and ready."
 
     # OPTION B: STANDARD DOWNLOAD (If Porting is FALSE)
     - name: Download and Extract Custom System (Standard)
@@ -229,7 +293,8 @@ jobs:
         ROM_URL="${{ github.event.inputs.custom_system_url }}"
         if [ -z "$ROM_URL" ]; then echo "✗ Error: Custom System URL required." && exit 1; fi
 
-        wget -O custom_rom_package "$ROM_URL"
+        # WGET QUIET MODE (-q)
+        wget -q -O custom_rom_package "$ROM_URL"
         
         CLEAN_URL="${ROM_URL%%\?*}"
         ROM_NAME=$(basename "$CLEAN_URL")
@@ -282,7 +347,7 @@ jobs:
       run: |
         cd work
         echo "==> Downloading ASRControl APK..."
-        wget -O ASRControl.apk "https://github.com/minhmc2007/minhmc2007/releases/download/v0.0.1/app-debug.apk"
+        wget -q -O ASRControl.apk "https://github.com/minhmc2007/minhmc2007/releases/download/v0.0.1/app-debug.apk"
         if [ ! -s "ASRControl.apk" ]; then echo "✗ Warning: APK download failed or empty. Injection will skip."; fi
 
     - name: Ensure Raw Image
@@ -302,7 +367,7 @@ jobs:
         cd work
         echo "==> Starting Docker for System Modification..."
         
-        wget -O pfetch "https://raw.githubusercontent.com/dylanaraps/pfetch/refs/heads/master/pfetch"
+        wget -q -O pfetch "https://raw.githubusercontent.com/dylanaraps/pfetch/refs/heads/master/pfetch"
         
         docker run --rm --privileged \
           -v "$(pwd):/work" \
@@ -406,8 +471,18 @@ jobs:
         cd work
         if [ ! -f "repacked_super.img" ]; then echo "✗ Error: Repack failed, image not found." && exit 1; fi
         mv repacked_super.img super.img
+        
         TAR_NAME="repacked_super_$(date +%Y%m%d).tar"
-        tar -cvf "$TAR_NAME" super.img
+        
+        echo "==> Creating Tarball..."
+        if [ -f "boot.img" ]; then
+            echo "--> Including patched boot.img"
+            tar -cvf "$TAR_NAME" super.img boot.img
+        else
+            echo "--> super.img only"
+            tar -cvf "$TAR_NAME" super.img
+        fi
+        
         echo "tar_path=work/$TAR_NAME" >> $GITHUB_OUTPUT
 
     - name: Upload Artifact
