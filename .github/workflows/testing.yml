@@ -243,8 +243,31 @@ jobs:
             exit 0
         fi
         
-        echo "==> Setting up AIK-Linux for Boot Patching..."
-        git clone https://github.com/SebaUbuntu/AIK-Linux.git AIK
+        echo "==> Setting up AIK-Linux (Wget Method)..."
+        # Download using Wget as requested. User-Agent added to avoid 403.
+        wget -q -U "Mozilla/5.0" -O aik.tar.gz "https://xdaforums.com/attachments/aik-linux-v3-8-all-tar-gz.5300923/"
+        
+        # Fallback: Check if file is too small (meaning XDA rejected the request and sent HTML)
+        if [ $(stat -c%s "aik.tar.gz") -lt 100000 ]; then
+             echo "⚠️ XDA Link returned HTML/Error. Downloading from Mirror to prevent failure..."
+             rm aik.tar.gz
+             wget -q -O aik.tar.gz "https://github.com/mvaisakh/AIK-Linux/raw/master/AIK-Linux-v3.8-ALL.tar.gz"
+        fi
+        
+        echo "==> Extracting AIK..."
+        tar -xzf aik.tar.gz
+        rm aik.tar.gz
+        
+        # Handle directory name (it usually extracts to AIK-Linux-v3.8-ALL)
+        if [ -d "AIK-Linux-v3.8-ALL" ]; then
+             mv AIK-Linux-v3.8-ALL AIK
+        elif [ -d "AIK-Linux" ]; then
+             mv AIK-Linux AIK
+        else
+             mkdir AIK
+             mv *AIK* AIK/ 2>/dev/null || true
+        fi
+        
         cd AIK
         
         echo "==> Unpacking boot.img..."
