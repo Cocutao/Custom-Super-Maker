@@ -288,7 +288,10 @@ jobs:
         fi
         
         cd ..
-        rm -rf AIK boot.img
+        
+        # SUDO ADDED HERE TO FIX PERMISSION DENIED ERROR
+        sudo rm -rf AIK boot.img
+        
         mv boot_patched.img boot.img
         echo "==> Boot image patched and ready."
 
