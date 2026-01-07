@@ -174,7 +174,7 @@ jobs:
                 lz4 -d boot.img.lz4 boot.img
                 rm boot.img.lz4
             elif [ -f "boot.img" ]; then
-                echo "==> Boot image is already raw (unlikely but possible)."
+                echo "==> Boot image found (already raw?)."
             fi
         fi
         
@@ -201,7 +201,7 @@ jobs:
         PORT_URL="${{ github.event.inputs.port_firmware_url }}"
         if [ -z "$PORT_URL" ]; then echo "✗ Error: Port Firmware URL is required for porting." && exit 1; fi
         
-        # WGET QUIET MODE ACTIVATED (-q)
+        # WGET QUIET MODE (-q)
         wget -q --content-disposition -O firmware.zip "$PORT_URL"
         
         echo "==> Running LinkToGSI.sh..."
@@ -209,10 +209,10 @@ jobs:
         
         ROM_TYPE="${{ github.event.inputs.rom_type }}"
         
-        # Run the heavy lifting
+        # Run the heavy lifting (ROOT)
         sudo bash LinkToGSI.sh "$(pwd)/firmware.zip" "$ROM_TYPE"
         
-        # Handle Output with SUDO because LinkToGSI runs as root
+        # Handle Output (ROOT OWNED FILES)
         PORTED_IMG=$(find Output -name "*.img" | head -n 1)
         
         if [ -z "$PORTED_IMG" ]; then
@@ -223,14 +223,15 @@ jobs:
         
         echo "==> Port Successful! Output: $PORTED_IMG"
         
-        # Fix Permission and Move
+        # Fix Permission and Move (USING SUDO)
         sudo mv "$PORTED_IMG" ../work/custom_system.img
         sudo chown $(whoami) ../work/custom_system.img
         
         echo "ROM_NAME=Ported_${ROM_TYPE}" >> $GITHUB_ENV
         
         cd ..
-        rm -rf Link2GSI
+        # CLEANUP WITH SUDO (Fixes Permission Denied)
+        sudo rm -rf Link2GSI
 
     # OPTION A-2: PATCH BOOT IMAGE (Permissive) - Only if Porting
     - name: Patch Boot Image (Permissive SELinux)
@@ -243,7 +244,6 @@ jobs:
         fi
         
         echo "==> Setting up AIK-Linux for Boot Patching..."
-        # Cloning a reliable mirror because XDA links fail in CI
         git clone https://github.com/SebaUbuntu/AIK-Linux.git AIK
         cd AIK
         
