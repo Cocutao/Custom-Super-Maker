@@ -12,8 +12,8 @@
 # Usage:
 #   sudo ./repacksuper_lite.sh <Source_Super_Path> <Custom_System_Path> <Output_Path>
 #
-# Author: Minhmc2077 (Optimized by Assistant)
-# License: MIT
+# Author: Minhmc2077 
+# License: GPL3
 # ==============================================================================
 
 # --- 1. INITIALIZATION & SAFETY CHECKS ---
