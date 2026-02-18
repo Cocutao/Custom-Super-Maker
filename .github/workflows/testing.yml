@@ -1,11 +1,11 @@
-name: Android Super Repack + OEM Port (Next Gen)
+name: Android Super Repack + OEM Port 
 
 on:
   workflow_dispatch:
     inputs:
-      # --- Device Super Partition Source ---
+      # --- Device Source (Base Firmware) ---
       device_preset:
-        description: 'Device: Select Stock Super Source'
+        description: 'Base: Select Device Firmware'
         required: true
         default: 'none'
         type: choice
@@ -14,22 +14,24 @@ on:
         - 'Samsung A04s (64GB)'
         - 'Samsung A15 (128/256GB)'
       stock_firmware_url:
-        description: 'Device: Custom Stock Firmware URL (If preset is none)'
+        description: 'Base: URL (If preset is none)'
         required: false
         type: string
 
-      # --- OEM Porting (Experimental) ---
+      # --- Custom ROM Source (System Image) ---
       enable_oem_port:
-        description: '[EXPERIMENTAL] Enable OEM ROM Port? (Ignores Custom ROM URL below)'
+        description: 'Mode: Port an OEM ROM? (True = Porting, False = GSI/Custom ROM)'
         required: true
         type: boolean
         default: false
+      
+      # If Mode = Porting
       port_firmware_url:
-        description: 'Port: Source Firmware URL (e.g. from MysticGSI)'
+        description: 'Port Source: Firmware URL (e.g. HyperOS, OxygenOS zip)'
         required: false
         type: string
       rom_type:
-        description: 'Port: ROM Type'
+        description: 'Port Source: ROM Type'
         required: false
         type: choice
         options:
@@ -41,38 +43,23 @@ on:
           - Flyme
           - Moto
 
-      # --- Standard GSI Source (If Porting is OFF) ---
+      # If Mode = GSI/Custom ROM
       custom_system_url:
-        description: 'GSI: Custom ROM URL (LineageOS, etc.) - Ignored if Port enabled'
+        description: 'GSI Source: System Image URL (Lineage, PixelExp, etc.)'
         required: false
         type: string
 
-      # --- Repack Options ---
+      # --- Options ---
       upload_to_release:
-        description: 'Upload to Release?'
+        description: 'Upload Result to Release?'
         required: true
         type: boolean
         default: false
-      empty_product:
-        description: 'Use empty product.img (-e)'
-        required: false
-        type: boolean
-        default: false
-      empty_system_ext:
-        description: 'Use empty system_ext.img (-x)'
-        required: false
-        type: boolean
-        default: false
       silent_mode:
-        description: 'Silent mode (-s)'
+        description: 'Silent Mode (Legacy flag, logs minimized)'
         required: false
         type: boolean
         default: true
-      writable:
-        description: 'Make partitions writable (-w)'
-        required: false
-        type: boolean
-        default: false
 
 jobs:
   repack-super:
@@ -80,10 +67,13 @@ jobs:
     permissions:
       contents: write
     steps:
-    - name: Checkout repository
+    # --------------------------------------------------------------------------
+    # 1. Environment Setup
+    # --------------------------------------------------------------------------
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Free disk space
+    - name: Optimize Disk Space
       uses: jlumbroso/free-disk-space@main
       with:
         tool-cache: true
@@ -93,417 +83,158 @@ jobs:
         large-packages: true
         swap-storage: true
 
-    - name: Install Dependencies
+    - name: Install System Dependencies
       run: |
-        echo "==> Updating and installing dependencies..."
+        echo "==> Installing Tools..."
         sudo apt-get update -qq
+        # Android & Filesystem Tools
+        sudo apt-get install -y -qq android-sdk-libsparse-utils tar xz-utils liblz4-tool unzip p7zip-full file wget curl megatools f2fs-tools erofs-utils cpio rsync
+        # Porting Support Tools
+        sudo apt-get install -y -qq unace unrar zip p7zip-rar sharutils rar uudeview mpack arj cabextract rename liblzma-dev brotli lz4 protobuf-compiler git gawk python3-pip
         
-        # Standard Repack Dependencies
-        sudo apt-get install -y -qq android-sdk-libsparse-utils tar xz-utils liblz4-tool unzip p7zip-full file wget curl megatools f2fs-tools erofs-utils python3-pip cpio
-        
-        # OEM Porting Dependencies
-        sudo apt-get install -y -qq unace unrar zip p7zip-rar sharutils \
-        rar uudeview mpack arj cabextract rename liblzma-dev brotli \
-        lz4 protobuf-compiler git gawk
-        
-        # Python dependencies
-        pip install -q gdown
-        pip3 install -q backports.lzma protobuf twrpdtgen extract-dtb pycryptodome
+        # Python Libs
+        pip install -q gdown backports.lzma protobuf twrpdtgen extract-dtb pycryptodome
 
-        # Docker
-        curl -fsSL https://get.docker.com -o get-docker.sh
-        sudo sh get-docker.sh
-
-    - name: Verify and Prepare Script
+    - name: Prepare Workspace & Script
       run: |
-        if [ ! -f "./repacksuper_lite.sh" ]; then echo "✗ Error: repacksuper_lite.sh not found" && exit 1; fi
-        chmod +x ./repacksuper_lite.sh
         mkdir -p work
+        
+        # Ensure the repack script is executable
+        if [ -f "./repacksuper_lite.sh" ]; then
+          chmod +x ./repacksuper_lite.sh
+        else
+          echo "::error::repacksuper_lite.sh not found in repository root."
+          exit 1
+        fi
 
     # --------------------------------------------------------------------------
-    # 1. Prepare Base (Target Device) Super Image
+    # 2. Base Firmware Acquisition (Stock Super)
     # --------------------------------------------------------------------------
-    - name: Download Stock Device Firmware (Base)
+    - name: Download Base Firmware
       run: |
         cd work
         PRESET="${{ github.event.inputs.device_preset }}"
+        URL="${{ github.event.inputs.stock_firmware_url }}"
         
+        echo "==> Downloading Base Firmware..."
         if [[ "$PRESET" == "Samsung A04s (64GB)" ]]; then
-          echo "==> Downloading Samsung A04s Firmware..."
           gdown --quiet --output stock_firmware.zip '1C9GtYTn1EZ4sQN7qfJeWN6gxDj_WbgY-'
-          
         elif [[ "$PRESET" == "Samsung A15 (128/256GB)" ]]; then
-          echo "==> Downloading Samsung A15 Firmware..."
           gdown --quiet --output stock_firmware.zip '12FoeBkPDHddj4lzd-T6pjHRQ8Ey3c2U8'
-          
+        elif [ -n "$URL" ]; then
+           if [[ $URL == *"mega.nz"* ]]; then megadl -o stock_firmware.zip "$URL"; else wget -q --content-disposition -O stock_firmware.zip "$URL"; fi
         else
-          echo "==> Using Custom URL..."
-          FIRMWARE_URL="${{ github.event.inputs.stock_firmware_url }}"
-          if [ -z "$FIRMWARE_URL" ]; then echo "✗ Error: No preset selected and no URL provided." && exit 1; fi
-          
-          if [[ $FIRMWARE_URL == *"mega.nz"* ]]; then 
-            megadl -o stock_firmware.zip "$FIRMWARE_URL"
-          else 
-            # -q to shut up wget
-            wget -q --content-disposition -O stock_firmware.zip "$FIRMWARE_URL"
-          fi
+           echo "::error::No device preset or URL selected." && exit 1
         fi
         
-        if [ ! -s "stock_firmware.zip" ]; then echo "✗ Error: Firmware download failed." && exit 1; fi
+        if [ ! -s "stock_firmware.zip" ]; then echo "::error::Download failed or empty." && exit 1; fi
         
-        echo "==> Extracting AP file..."
-        AP_FILENAME=$(unzip -l "stock_firmware.zip" | grep -i -o -E "AP_.*\.tar\.md5" | head -n 1)
-        unzip -o -j "stock_firmware.zip" "$AP_FILENAME"
-        rm "stock_firmware.zip"
+        echo "==> Extracting Super Partition..."
+        # Extract AP file
+        AP_FILE=$(unzip -l stock_firmware.zip | grep -ioE "AP_.*\.tar\.md5" | head -n1)
+        unzip -o -j stock_firmware.zip "$AP_FILE"
+        rm stock_firmware.zip
         
-        echo "==> Extracting super.img.lz4..."
-        tar -xvf "$AP_FILENAME" --wildcards '*super.img*.lz4'
-        
-        echo "==> Decompressing Super LZ4..."
-        SUPER_LZ4=$(ls *super.img*.lz4 | head -n 1)
-        lz4 -d "$SUPER_LZ4" stock_super_sparse.img
-        rm "$SUPER_LZ4"
-
-        # Check if we need to extract boot.img for Porting
-        if [ "${{ github.event.inputs.enable_oem_port }}" == "true" ]; then
-            echo "==> Extracting boot.img.lz4 for Permissive Patching..."
-            tar -xvf "$AP_FILENAME" --wildcards '*boot.img*.lz4' || echo "Warning: boot.img.lz4 not found in AP"
-            
-            if [ -f "boot.img.lz4" ]; then
-                echo "==> Decompressing Boot LZ4..."
-                lz4 -d boot.img.lz4 boot.img
-                rm boot.img.lz4
-            elif [ -f "boot.img" ]; then
-                echo "==> Boot image found (already raw?)."
-            fi
-        fi
-        
-        rm "$AP_FILENAME"
+        # Extract and Decompress Super
+        tar -xf "$AP_FILE" --wildcards '*super.img.lz4'
+        lz4 -d super.img.lz4 stock_super_sparse.img
+        rm super.img.lz4 "$AP_FILE"
 
     # --------------------------------------------------------------------------
-    # 2. Logic Split: Generate Port OR Download GSI
+    # 3. Custom System Acquisition (Port or Download)
     # --------------------------------------------------------------------------
-    
-    # OPTION A: OEM ROM PORT (Experimental)
-    - name: Run OEM ROM Port (Link2GSI)
+    - name: Generate Custom System (Porting Mode)
       if: github.event.inputs.enable_oem_port == 'true'
       run: |
-        echo "==> Starting OEM ROM Port Process..."
-        
+        echo "==> Porting Mode Enabled."
         git clone https://github.com/minhmc2007/Link2GSI
         cd Link2GSI
         
-        # Fix submodule
+        # Fix Submodules
         rm -rf Tools/Firmware_extractor
         git clone https://github.com/erfanoabdi/Firmware_extractor.git Tools/Firmware_extractor
         
-        echo "==> Downloading Source Firmware for Porting..."
-        PORT_URL="${{ github.event.inputs.port_firmware_url }}"
-        if [ -z "$PORT_URL" ]; then echo "✗ Error: Port Firmware URL is required for porting." && exit 1; fi
+        # Download Source
+        wget -q --content-disposition -O firmware.zip "${{ github.event.inputs.port_firmware_url }}"
         
-        # WGET QUIET MODE (-q)
-        wget -q --content-disposition -O firmware.zip "$PORT_URL"
+        # Execute Port
+        sudo bash LinkToGSI.sh "$(pwd)/firmware.zip" "${{ github.event.inputs.rom_type }}"
         
-        echo "==> Running LinkToGSI.sh..."
-        chmod +x LinkToGSI.sh
+        # Locate Output
+        IMG=$(find Output -name "*.img" | head -n1)
+        if [ -z "$IMG" ]; then echo "::error::Porting failed to produce an image." && exit 1; fi
         
-        ROM_TYPE="${{ github.event.inputs.rom_type }}"
-        
-        # Run the heavy lifting (ROOT)
-        sudo bash LinkToGSI.sh "$(pwd)/firmware.zip" "$ROM_TYPE"
-        
-        # Handle Output (ROOT OWNED FILES)
-        PORTED_IMG=$(find Output -name "*.img" | head -n 1)
-        
-        if [ -z "$PORTED_IMG" ]; then
-            echo "✗ Error: Porting failed. No output image found."
-            ls -R Output
-            exit 1
-        fi
-        
-        echo "==> Port Successful! Output: $PORTED_IMG"
-        
-        # Fix Permission and Move (USING SUDO)
-        sudo mv "$PORTED_IMG" ../work/custom_system.img
+        # Move to work dir
+        sudo mv "$IMG" ../work/custom_system.img
         sudo chown $(whoami) ../work/custom_system.img
-        
-        echo "ROM_NAME=Ported_${ROM_TYPE}" >> $GITHUB_ENV
-        
-        cd ..
-        # CLEANUP WITH SUDO (Fixes Permission Denied)
-        sudo rm -rf Link2GSI
+        sudo rm -rf ../Link2GSI
 
-    # OPTION A-2: PATCH BOOT IMAGE (Permissive) - Only if Porting
-    - name: Patch Boot Image (Permissive SELinux)
-      if: github.event.inputs.enable_oem_port == 'true'
-      run: |
-        cd work
-        if [ ! -f "boot.img" ]; then
-            echo "⚠️ Warning: boot.img not found. Skipping Permissive Patch."
-            exit 0
-        fi
-        
-        echo "==> Setting up AIK-Linux (Draekko Mirror)..."
-        # Using working mirror
-        git clone https://github.com/draekko/AIK-Linux.git AIK
-        cd AIK
-        
-        echo "==> Unpacking boot.img..."
-        cp ../boot.img .
-        chmod +x unpackimg.sh repackimg.sh bin/*
-        ./unpackimg.sh
-        
-        echo "==> Patching cmdline to PERMISSIVE..."
-        CMDLINE_FILE="split_img/boot.img-cmdline"
-        
-        if [ -f "$CMDLINE_FILE" ]; then
-            echo "Original cmdline:"
-            cat "$CMDLINE_FILE"
-            
-            # Replaces 'androidboot.selinux=enforce' OR 'androidboot.selinux=enforcing'
-            # with 'androidboot.selinux=permissive'
-            sed -i -E 's/androidboot.selinux=(enforce|enforcing)/androidboot.selinux=permissive/g' "$CMDLINE_FILE"
-            
-            # Check if it was replaced or needs appending
-            if ! grep -q "androidboot.selinux=permissive" "$CMDLINE_FILE"; then
-                echo " -> 'enforce/enforcing' not found, appending permissive..."
-                sed -i '$s/$/ androidboot.selinux=permissive/' "$CMDLINE_FILE"
-            fi
-            
-            echo "Patched cmdline:"
-            cat "$CMDLINE_FILE"
-        else
-            echo "⚠️ Warning: cmdline file not found inside boot.img"
-        fi
-        
-        echo "==> Repacking boot.img..."
-        ./repackimg.sh
-        
-        if [ -f "image-new.img" ]; then
-            echo "==> Patch Successful!"
-            mv image-new.img ../boot_patched.img
-        else
-            echo "✗ Error: Repack failed."
-            exit 1
-        fi
-        
-        cd ..
-        
-        # SUDO ADDED HERE TO FIX PERMISSION DENIED ERROR
-        sudo rm -rf AIK boot.img
-        
-        mv boot_patched.img boot.img
-        echo "==> Boot image patched and ready."
-
-    # OPTION B: STANDARD DOWNLOAD (If Porting is FALSE)
-    - name: Download and Extract Custom System (Standard)
+    - name: Download Custom System (GSI Mode)
       if: github.event.inputs.enable_oem_port == 'false'
       run: |
+        echo "==> GSI/ROM Download Mode."
+        URL="${{ github.event.inputs.custom_system_url }}"
+        if [ -z "$URL" ]; then echo "::error::Custom System URL is required." && exit 1; fi
+        
         cd work
-        echo "==> Downloading Custom ROM from URL..."
-        ROM_URL="${{ github.event.inputs.custom_system_url }}"
-        if [ -z "$ROM_URL" ]; then echo "✗ Error: Custom System URL required." && exit 1; fi
-
-        # WGET QUIET MODE (-q)
-        wget -q -O custom_rom_package "$ROM_URL"
+        wget -q -O rom_package "$URL"
         
-        CLEAN_URL="${ROM_URL%%\?*}"
-        ROM_NAME=$(basename "$CLEAN_URL")
-        echo "Detected ROM Name: $ROM_NAME"
-        echo "ROM_NAME=$ROM_NAME" >> $GITHUB_ENV
+        # Detect and Extract
+        TYPE=$(file -b rom_package)
+        echo "File Type: $TYPE"
         
-        FILE_DESC=$(file -b custom_rom_package)
-        echo "Detected File Type: $FILE_DESC"
-
-        if [[ "$FILE_DESC" == *"XZ compressed"* ]]; then
-            mv custom_rom_package c.img.xz
-            unxz c.img.xz
-            mv c.img custom_system.img
-            
-        elif [[ "$FILE_DESC" == *"Zip archive"* ]]; then
-            unzip -o custom_rom_package
-            
-        elif [[ "$FILE_DESC" == *"7-zip archive"* ]]; then
-            7z x custom_rom_package
-            
-        elif [[ "$FILE_DESC" == *"gzip compressed"* ]]; then
-            mv custom_rom_package c.img.gz
-            gzip -d c.img.gz
-            mv c.img custom_system.img
-            
-        else
-            echo "Assuming raw image..."
-            mv custom_rom_package custom_system.img
-        fi
+        if [[ "$TYPE" == *"XZ compressed"* ]]; then mv rom_package s.xz; unxz s.xz; mv s custom_system.img
+        elif [[ "$TYPE" == *"gzip compressed"* ]]; then mv rom_package s.gz; gzip -d s.gz; mv s custom_system.img
+        elif [[ "$TYPE" == *"Zip archive"* ]]; then unzip -o rom_package
+        elif [[ "$TYPE" == *"7-zip"* ]]; then 7z x rom_package
+        else mv rom_package custom_system.img; fi
         
+        # Ensure we have the .img
         if [ ! -f "custom_system.img" ]; then
-            echo "==> Searching for extracted .img file..."
-            IMG_FILE=$(find . -type f -name "*.img" ! -name "stock_super_sparse.img" -printf "%s\t%p\n" | sort -n | tail -1 | cut -f2-)
-            
-            if [ -z "$IMG_FILE" ]; then
-                echo "✗ Error: No .img file found after extraction!"
-                ls -R
-                exit 1
-            fi
-            
-            echo "==> Found image: $IMG_FILE"
-            mv "$IMG_FILE" custom_system.img
+           FIND=$(find . -maxdepth 2 -name "*.img" ! -name "stock_super_sparse.img" | head -n1)
+           if [ -n "$FIND" ]; then mv "$FIND" custom_system.img; else echo "::error::Extraction failed." && exit 1; fi
         fi
 
     # --------------------------------------------------------------------------
-    # 3. Common Processing (Injection, Repack, Upload)
+    # 4. Super Partition Repack (The Core Logic)
     # --------------------------------------------------------------------------
-
-    - name: Download ASRControl APK
+    - name: Execute Repack Script
       run: |
-        cd work
-        echo "==> Downloading ASRControl APK..."
-        wget -q -O ASRControl.apk "https://github.com/minhmc2007/minhmc2007/releases/download/v0.0.1/app-debug.apk"
-        if [ ! -s "ASRControl.apk" ]; then echo "✗ Warning: APK download failed or empty. Injection will skip."; fi
-
-    - name: Ensure Raw Image
-      run: |
-        cd work
-        mv custom_system.img custom_system.orig
-        if simg2img custom_system.orig custom_system.img; then
-          echo "Converted sparse to raw."
-          rm custom_system.orig
-        else
-          echo "Image is likely already raw or EROFS. Using original."
-          mv custom_system.orig custom_system.img
+        echo "==> Starting Repack Process..."
+        
+        # 1. Verify Inputs
+        if [ ! -f "work/stock_super_sparse.img" ]; then echo "::error::Stock Super Image missing."; exit 1; fi
+        if [ ! -f "work/custom_system.img" ]; then echo "::error::Custom System Image missing."; exit 1; fi
+        
+        # 2. Execute with Sudo (Required for EROFS/Mounting)
+        # Usage: sudo ./script <Source> <System> <Output>
+        sudo ./repacksuper_lite.sh \
+          work/stock_super_sparse.img \
+          work/custom_system.img \
+          work/repacked_super.img
+        
+        # 3. Verify Output
+        if [ ! -f "work/repacked_super.img" ]; then
+           echo "::error::Repack script finished but output file is missing."
+           exit 1
         fi
 
-    - name: System Modification (APK, Branding, pfetch)
-      run: |
-        cd work
-        echo "==> Starting Docker for System Modification..."
-        
-        wget -q -O pfetch "https://raw.githubusercontent.com/dylanaraps/pfetch/refs/heads/master/pfetch"
-        
-        docker run --rm --privileged \
-          -v "$(pwd):/work" \
-          -e ROM_NAME="${{ env.ROM_NAME }}" \
-          ubuntu:24.04 \
-          bash -c '
-            set -e
-            apt-get update -qq && apt-get install -y -qq e2fsprogs util-linux file erofs-utils android-sdk-libsparse-utils
-            cd /work
-            
-            echo "==> Using erofs-utils version:"
-            fsck.erofs -V
-            
-            FS_TYPE=$(blkid -o value -s TYPE custom_system.img 2>/dev/null || echo "unknown")
-            if [ "$FS_TYPE" = "unknown" ]; then
-                if file custom_system.img | grep -q "EROFS"; then FS_TYPE="erofs"; fi
-            fi
-            echo "==> Filesystem detected: $FS_TYPE"
-            
-            inject_files() {
-                local MOUNT_DIR=$1
-                local TARGET_DIR="$MOUNT_DIR/system/app"
-                if [ ! -d "$TARGET_DIR" ]; then TARGET_DIR="$MOUNT_DIR/app"; fi
-                
-                if [ -f "ASRControl.apk" ]; then
-                    mkdir -p "$TARGET_DIR/ASRControl"
-                    cp ASRControl.apk "$TARGET_DIR/ASRControl/ASRControl.apk"
-                    chmod 755 "$TARGET_DIR/ASRControl"
-                    chmod 644 "$TARGET_DIR/ASRControl/ASRControl.apk"
-                    echo "--> APK Injected."
-                fi
-                
-                local BIN_DIR="$MOUNT_DIR/system/bin"
-                if [ ! -d "$BIN_DIR" ]; then BIN_DIR="$MOUNT_DIR/bin"; fi
-                
-                cp pfetch "$BIN_DIR/pfetch"
-                chmod 755 "$BIN_DIR/pfetch"
-                echo "--> Binary Injection Complete."
-
-                local PROP_FILE="$MOUNT_DIR/system/build.prop"
-                if [ ! -f "$PROP_FILE" ]; then PROP_FILE="$MOUNT_DIR/build.prop"; fi
-                
-                if [ -f "$PROP_FILE" ]; then
-                    sed -i "s|ro\.build\.id=.*|ro.build.display.id=Built.By.Minh2077.Script|g" "$PROP_FILE"
-                    if ! grep -q "ro.repack.author" "$PROP_FILE"; then
-                        echo "" >> "$PROP_FILE"
-                        echo "ro.repack.version=v1.0" >> "$PROP_FILE"
-                        echo "ro.repack.author=Minhmc2077" >> "$PROP_FILE"
-                        echo "ro.repack.fs=$FS_TYPE" >> "$PROP_FILE"
-                        echo "ro.repack.gsi=$ROM_NAME" >> "$PROP_FILE"
-                        echo "ro.repack.asr_control=true" >> "$PROP_FILE"
-                        echo "ro.repack.extras=pfetch" >> "$PROP_FILE"
-                    fi
-                fi
-            }
-
-            if [ "$FS_TYPE" = "ext4" ]; then
-              echo "==> Handling EXT4..."
-              echo "--> Extending image size..."
-              truncate -s +2G custom_system.img
-              
-              echo "--> Resizing filesystem..."
-              resize2fs -f custom_system.img
-              
-              echo "--> Unsharing blocks..."
-              e2fsck -y -E unshare_blocks custom_system.img || [ $? -le 1 ]
-              
-              mkdir -p /mnt/sys
-              mount -o loop custom_system.img /mnt/sys
-              inject_files "/mnt/sys"
-              umount /mnt/sys
-              
-              echo "--> Shrinking image..."
-              e2fsck -f -y custom_system.img || [ $? -le 1 ]
-              resize2fs -M custom_system.img
-
-            elif [ "$FS_TYPE" = "erofs" ]; then
-              echo "==> Handling EROFS..."
-              fsck.erofs --extract=extracted_system custom_system.img
-              inject_files "extracted_system"
-              mkfs.erofs -zlz4hc custom_system_new.img extracted_system
-              mv custom_system_new.img custom_system.img
-              rm -rf extracted_system
-            fi
-          '
-
-    - name: Run Repack
-      run: |
-        FLAGS="-r $(pwd)/work"
-        if [ "${{ github.event.inputs.silent_mode }}" == "true" ]; then FLAGS="$FLAGS -s"; fi
-        if [ "${{ github.event.inputs.empty_product }}" == "true" ]; then FLAGS="$FLAGS -e"; fi
-        if [ "${{ github.event.inputs.empty_system_ext }}" == "true" ]; then FLAGS="$FLAGS -x"; fi
-        if [ "${{ github.event.inputs.writable }}" == "true" ]; then FLAGS="$FLAGS -w"; fi
-        
-        echo "Running with flags: $FLAGS"
-        ./repacksuper_lite.sh $FLAGS work/stock_super_sparse.img work/custom_system.img work/repacked_super.img
-
-    - name: Create Tarball
+    # --------------------------------------------------------------------------
+    # 5. Final Packaging & Upload
+    # --------------------------------------------------------------------------
+    - name: Compress and Upload
       id: package
       run: |
         cd work
-        if [ ! -f "repacked_super.img" ]; then echo "✗ Error: Repack failed, image not found." && exit 1; fi
         mv repacked_super.img super.img
+        TAR_NAME="super_repack_${{ github.run_id }}.tar"
         
-        TAR_NAME="repacked_super_$(date +%Y%m%d).tar"
-        
-        echo "==> Creating Tarball..."
-        if [ -f "boot.img" ]; then
-            echo "--> Including patched boot.img"
-            tar -cvf "$TAR_NAME" super.img boot.img
-        else
-            echo "--> super.img only"
-            tar -cvf "$TAR_NAME" super.img
-        fi
+        echo "==> Creating Tarball: $TAR_NAME"
+        tar -cvf "$TAR_NAME" super.img
         
         echo "tar_path=work/$TAR_NAME" >> $GITHUB_OUTPUT
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: repacked-super-image
-        path: ${{ steps.package.outputs.tar_path }}
-        retention-days: 7
-
-    - name: Upload Release
+    - name: Upload to Release
       if: github.event.inputs.upload_to_release == 'true'
       uses: softprops/action-gh-release@v2
       with:
