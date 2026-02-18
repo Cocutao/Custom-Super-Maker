@@ -116,8 +116,8 @@ jobs:
 
     - name: Verify and Prepare Script
       run: |
-        if [ ! -f "./repacksuper.sh" ]; then echo "✗ Error: repacksuper.sh not found" && exit 1; fi
-        chmod +x ./repacksuper.sh
+        if [ ! -f "./repacksuper_lite.sh" ]; then echo "✗ Error: repacksuper_lite.sh not found" && exit 1; fi
+        chmod +x ./repacksuper_lite.sh
         mkdir -p work
 
     # --------------------------------------------------------------------------
@@ -474,7 +474,7 @@ jobs:
         if [ "${{ github.event.inputs.writable }}" == "true" ]; then FLAGS="$FLAGS -w"; fi
         
         echo "Running with flags: $FLAGS"
-        ./repacksuper.sh $FLAGS work/stock_super_sparse.img work/custom_system.img work/repacked_super.img
+        ./repacksuper_lite.sh $FLAGS work/stock_super_sparse.img work/custom_system.img work/repacked_super.img
 
     - name: Create Tarball
       id: package
