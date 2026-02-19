@@ -60,6 +60,7 @@ Choose the **"Android Super Repack (Universal FS)"** workflow and hit **Run Work
 ---
 
 ## 🖼️ How to Get Firmware Links
+# WARNING: SAMFW added cloudflare, so the my method wont work, using other site might work
 Don't know where to get the `AP` link? Follow the visual guide in the `pic/` folder:
 `pic1.png` through `pic14.png` provide a step-by-step walkthrough of the extraction process.
 
