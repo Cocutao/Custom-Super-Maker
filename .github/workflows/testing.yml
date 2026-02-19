@@ -1,4 +1,4 @@
-name: Android Super Repack + OEM Port 
+name: Android Super Repack + OEM Port
 
 on:
   workflow_dispatch:
@@ -222,7 +222,7 @@ jobs:
     # --------------------------------------------------------------------------
     # 5. Final Packaging & Upload
     # --------------------------------------------------------------------------
-    - name: Compress and Upload
+    - name: Compress and Prepare Package
       id: package
       run: |
         cd work
@@ -233,6 +233,12 @@ jobs:
         tar -cvf "$TAR_NAME" super.img
         
         echo "tar_path=work/$TAR_NAME" >> $GITHUB_OUTPUT
+
+    - name: Upload Repack Result as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: super_repack_${{ github.run_id }}
+        path: ${{ steps.package.outputs.tar_path }}
 
     - name: Upload to Release
       if: github.event.inputs.upload_to_release == 'true'
